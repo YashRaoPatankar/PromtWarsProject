@@ -10,13 +10,43 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key and "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 
-if api_key:
-    genai.configure(api_key=api_key)
+if not api_key:
+    st.error("⚠️ GEMINI_API_KEY is missing. Please configure it in your Streamlit Cloud Secrets.")
+    st.stop()
 
-# Efficiency optimization: Cache model initialization across runs
+genai.configure(api_key=api_key)
+
+# Efficiency optimization: Cache model initialization and dynamically resolve active model
 @st.cache_resource
 def get_gemini_model():
-    return genai.GenerativeModel('gemini-1.5-flash')
+    preferred_models = [
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash-002",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    ]
+    try:
+        available = [
+            m.name for m in genai.list_models()
+            if "generateContent" in m.supported_generation_methods
+        ]
+        # Match preferred model hierarchy
+        for pref in preferred_models:
+            for avail in available:
+                if pref in avail:
+                    return genai.GenerativeModel(avail)
+        # Fallback to any model containing flash or gemini
+        for avail in available:
+            if "flash" in avail or "gemini" in avail:
+                return genai.GenerativeModel(avail)
+        if available:
+            return genai.GenerativeModel(available[0])
+    except Exception:
+        pass
+    return genai.GenerativeModel("gemini-1.5-flash-latest")
 
 st.set_page_config(page_title="AI Student Workspace", page_icon="📚", layout="centered")
 st.title("📚 AI-Powered Student Workspace")
@@ -42,7 +72,7 @@ if uploaded_file is not None:
         st.error(f"File size exceeds the {MAX_FILE_SIZE_MB}MB limit. Please upload a smaller file.")
         st.stop()
 
-    if st.button("Generate Notes & Quiz"):
+    if st.button("Generate Notes & Quiz", help="Analyze document and generate revision materials."):
         try:
             with st.spinner("Analyzing document with Gemini..."):
                 model = get_gemini_model()
@@ -60,7 +90,7 @@ if uploaded_file is not None:
                     ]
                 else:
                     doc = docx.Document(uploaded_file)
-                    text = "\n".join([p.text for p in doc.paragraphs])
+                    text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
                     contents = [f"{prompt}\n\nDocument Text:\n{text}"]
 
                 response = model.generate_content(contents)
@@ -72,7 +102,8 @@ if uploaded_file is not None:
                     label="Download Notes & Quiz (.md)",
                     data=response.text,
                     file_name=f"{uploaded_file.name}_revision.md",
-                    mime="text/markdown"
+                    mime="text/markdown",
+                    help="Save the generated notes and quiz as a Markdown file."
                 )
         except Exception as e:
             st.error(f"API Error: {e}")
