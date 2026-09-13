@@ -16,10 +16,16 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
+# Efficiency optimization: Cache model initialization across runs
+@st.cache_resource
+def get_gemini_model():
+    return genai.GenerativeModel('gemini-3.6-flash')
+
 st.set_page_config(page_title="AI Student Workspace", page_icon="📚", layout="centered")
 st.title("📚 AI-Powered Student Workspace")
 st.write("Upload your study materials (PDF or DOCX) to get personalized revision notes and practice quizzes!")
 
+# Accessibility optimization: descriptive labels and help tooltips
 course_context = st.selectbox(
     "Select your course context:",
     ["General", "Computational and Data Science", "Calculus", "Physics", "Python Programming"],
@@ -29,43 +35,20 @@ course_context = st.selectbox(
 uploaded_file = st.file_uploader(
     "Upload Document",
     type=['pdf', 'docx'],
-    help="Upload lecture slide decks or notes (max 25MB)."
+    help="Upload lecture slide decks or notes (max 25MB). Scanned slides are supported."
 )
 
 if uploaded_file is not None:
     # Security validation
     MAX_FILE_SIZE_MB = 25
     if uploaded_file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
-        st.error(f"File size exceeds {MAX_FILE_SIZE_MB}MB limit.")
+        st.error(f"File size exceeds the {MAX_FILE_SIZE_MB}MB limit. Please upload a smaller file.")
         st.stop()
 
     if st.button("Generate Notes & Quiz", help="Analyze document and generate revision materials."):
         try:
             with st.spinner("Analyzing document with Gemini..."):
-                # Dynamically fetch models authorized for this API key
-                valid_models = [
-                    m.name for m in genai.list_models() 
-                    if 'generateContent' in m.supported_generation_methods
-                ]
-                
-                # Prioritize flash / multimodal models
-                target_model = None
-                for candidate in ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-1.5-pro']:
-                    for m in valid_models:
-                        if candidate in m:
-                            target_model = m
-                            break
-                    if target_model:
-                        break
-
-                if not target_model and valid_models:
-                    target_model = valid_models[0]
-
-                if not target_model:
-                    st.error("No generation models found for this API key. Verify your Google AI Studio key.")
-                    st.stop()
-
-                model = genai.GenerativeModel(target_model)
+                model = get_gemini_model()
 
                 prompt = f"""
                 You are an expert academic tutor for a student studying {course_context}.
@@ -98,8 +81,3 @@ if uploaded_file is not None:
                 )
         except Exception as e:
             st.error(f"API Error: {e}")
-            try:
-                available = [m.name for m in genai.list_models()]
-                st.info(f"Available models for this key: {available}")
-            except Exception as inner_err:
-                st.warning(f"Could not list models: {inner_err}")
